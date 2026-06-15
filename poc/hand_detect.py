@@ -57,7 +57,7 @@ with vision.HandLandmarker.create_from_options(options) as landmarker:
                     print(f"Landmark {idx}: x={lm.x:.3f}, y={lm.y:.3f}, z={lm.z:.3f}")
 
         cv2.imshow("MediaPipe Hands", frame)
-        if cv2.waitKey(1) & 0xFF == 27:
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
 cap.release()
