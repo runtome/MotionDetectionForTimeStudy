@@ -1,4 +1,5 @@
 import argparse
+import time
 import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -8,6 +9,7 @@ import os
 from PIL import Image
 from rfdetr import RFDETRBase
 import supervision as sv
+import torch
 
 # RF-DETR uses 1-indexed COCO IDs (1-90) with gaps — use a dict for safe lookup
 COCO_CLASSES = {
@@ -30,6 +32,10 @@ COCO_CLASSES = {
     86: "vase", 87: "scissors", 88: "teddy bear", 89: "hair drier", 90: "toothbrush",
 }
 
+# --- GPU detection ---
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Torch device: {device}")
+
 # --- Hand Landmarker setup ---
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'hand_landmarker.task')
 MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
@@ -48,30 +54,45 @@ HAND_CONNECTIONS = [
     (0,17),
 ]
 
-base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-hand_options = vision.HandLandmarkerOptions(
-    base_options=base_options,
-    running_mode=vision.RunningMode.IMAGE,
-    num_hands=2,
-    min_hand_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
+def _make_hand_options(gpu: bool) -> vision.HandLandmarkerOptions:
+    delegate = python.BaseOptions.Delegate.GPU if gpu else python.BaseOptions.Delegate.CPU
+    return vision.HandLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=MODEL_PATH, delegate=delegate),
+        running_mode=vision.RunningMode.IMAGE,
+        num_hands=2,
+        min_hand_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+
+def _create_landmarker() -> vision.HandLandmarker:
+    if device == "cuda":
+        try:
+            lm = vision.HandLandmarker.create_from_options(_make_hand_options(gpu=True))
+            print("MediaPipe: GPU delegate")
+            return lm
+        except Exception:
+            print("MediaPipe: GPU delegate unavailable, falling back to CPU")
+    print("MediaPipe: CPU delegate")
+    return vision.HandLandmarker.create_from_options(_make_hand_options(gpu=False))
 
 # --- RF-DETR setup ---
 print("Loading RF-DETR model...")
-object_model = RFDETRBase()
+object_model = RFDETRBase(device=device)
 object_model.optimize_for_inference()
 box_annotator = sv.BoxAnnotator()
 label_annotator = sv.LabelAnnotator()
 
+# --- Argument parsing ---
 parser = argparse.ArgumentParser()
 parser.add_argument("--file", type=str, default=None, help="Path to a video file (omit to use webcam)")
 args = parser.parse_args()
 
 source = args.file if args.file else 0
 cap = cv2.VideoCapture(source)
+landmarker = _create_landmarker()
+prev_time = time.time()
 
-with vision.HandLandmarker.create_from_options(hand_options) as landmarker:
+try:
     while cap.isOpened():
         success, frame = cap.read()
         if not success:
@@ -105,9 +126,16 @@ with vision.HandLandmarker.create_from_options(hand_options) as landmarker:
                 for idx, (x, y) in enumerate(pts):
                     cv2.circle(frame, (x, y), 4, (0, 255, 0), -1)
 
+        curr_time = time.time()
+        fps = 1.0 / (curr_time - prev_time)
+        prev_time = curr_time
+        cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, f"Device: {device.upper()}", (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
         cv2.imshow("Object + Hand Detection", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-
-cap.release()
-cv2.destroyAllWindows()
+finally:
+    landmarker.close()
+    cap.release()
+    cv2.destroyAllWindows()

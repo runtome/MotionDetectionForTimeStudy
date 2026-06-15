@@ -1,3 +1,4 @@
+import time
 import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -22,18 +23,30 @@ HAND_CONNECTIONS = [
     (0,17),
 ]
 
-base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-options = vision.HandLandmarkerOptions(
-    base_options=base_options,
-    running_mode=vision.RunningMode.IMAGE,
-    num_hands=2,
-    min_hand_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
+def _make_hand_options(gpu: bool) -> vision.HandLandmarkerOptions:
+    delegate = python.BaseOptions.Delegate.GPU if gpu else python.BaseOptions.Delegate.CPU
+    return vision.HandLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=MODEL_PATH, delegate=delegate),
+        running_mode=vision.RunningMode.IMAGE,
+        num_hands=2,
+        min_hand_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+
+def _create_landmarker() -> vision.HandLandmarker:
+    try:
+        lm = vision.HandLandmarker.create_from_options(_make_hand_options(gpu=True))
+        print("MediaPipe: GPU delegate")
+        return lm
+    except Exception:
+        print("MediaPipe: GPU unavailable, using CPU")
+        return vision.HandLandmarker.create_from_options(_make_hand_options(gpu=False))
 
 cap = cv2.VideoCapture(0)
+landmarker = _create_landmarker()
+prev_time = time.time()
 
-with vision.HandLandmarker.create_from_options(options) as landmarker:
+try:
     while cap.isOpened():
         success, frame = cap.read()
         if not success:
@@ -56,9 +69,15 @@ with vision.HandLandmarker.create_from_options(options) as landmarker:
                     lm = hand_landmarks[idx]
                     print(f"Landmark {idx}: x={lm.x:.3f}, y={lm.y:.3f}, z={lm.z:.3f}")
 
+        curr_time = time.time()
+        fps = 1.0 / (curr_time - prev_time)
+        prev_time = curr_time
+        cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
         cv2.imshow("MediaPipe Hands", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-
-cap.release()
-cv2.destroyAllWindows()
+finally:
+    landmarker.close()
+    cap.release()
+    cv2.destroyAllWindows()
