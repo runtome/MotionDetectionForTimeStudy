@@ -3,3 +3,4 @@ mediapipe
 rfdetr
 supervision
 Pillow
+ollama
