@@ -38,12 +38,23 @@ Press `q` in the OpenCV window to quit any script.
 pip install -r requirements.txt
 # For llm_description.py only:
 ollama pull qwen2.5vl:7b
+# For action_recognition.py: pytorchvideo is in requirements.txt;
+# X3D-S weights (~200 MB) and Kinetics-400 class names JSON auto-download on first run.
 ```
 
 RF-DETR weights (~355 MB) auto-download to `~/.roboflow/models/` on first run.  
 MediaPipe `.task` files (~25–30 MB each) auto-download into `poc/` on first run.
 
 ## Architecture
+
+### `action_recognition.py` — temporal action classification
+
+- **RF-DETR** detects persons per frame; highest-confidence person is the "primary subject"
+- Primary person is cropped with 15% padding and added to a rolling frame buffer every 5th frame (subsampling webcam to ~6 fps to match X3D-S training cadence)
+- **X3D-S** (via `torch.hub.load("facebookresearch/pytorchvideo", "x3d_s", pretrained=True)`) classifies the 13-frame clip → Kinetics-400 top-k action label
+- Inference runs on the main thread (X3D-S is ~5–20 ms on GPU; acceptable for POC)
+- Cyan bounding box highlights the primary person whose crops feed the action model
+- `poc/kinetics400_classnames.json` auto-downloads on first run; if that fails, indices are shown instead
 
 ### Detection stack (per frame, in order)
 

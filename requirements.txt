@@ -4,3 +4,4 @@ rfdetr
 supervision
 Pillow
 ollama
+pytorchvideo
