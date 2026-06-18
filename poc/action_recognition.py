@@ -145,6 +145,30 @@ def draw_action_panel(frame, results: list, buffer_len: int):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
         y += 22
 
+def draw_time_accumulator(frame, time_accum: dict):
+    """Draw top-5 accumulated action times at bottom-right."""
+    if not time_accum:
+        return
+    h, w = frame.shape[:2]
+    top5 = sorted(time_accum.items(), key=lambda x: x[1], reverse=True)[:5]
+    row_h = 20
+    panel_h = row_h * (len(top5) + 1) + 10
+    x_off = w - 280
+    y_start = h - panel_h - 5
+    # semi-transparent background
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x_off - 5, y_start - 5), (w - 5, h - 5), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+    y = y_start + row_h
+    cv2.putText(frame, "Accumulated Time", (x_off, y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 200), 1, cv2.LINE_AA)
+    y += row_h
+    for label, secs in top5:
+        short = label[:24]
+        cv2.putText(frame, f"{short}: {secs:.1f}s", (x_off, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 255), 1, cv2.LINE_AA)
+        y += row_h
+
 # ── Source & writer ───────────────────────────────────────────────────────────
 source = args.file if args.file else 0
 cap = cv2.VideoCapture(source)
@@ -160,6 +184,9 @@ if args.output:
 # ── Main loop ─────────────────────────────────────────────────────────────────
 frame_buffer: collections.deque = collections.deque(maxlen=CLIP_FRAMES)
 action_labels: list = []
+time_accum: dict = collections.defaultdict(float)
+current_top1: str = ""
+last_inference_time: float = 0.0
 frame_count = 0
 prev_time = time.time()
 
@@ -206,7 +233,13 @@ try:
 
         # ── Run X3D-S when buffer is full and a new frame was just added ──────
         if new_sample and len(frame_buffer) == CLIP_FRAMES:
+            now = time.time()
+            # Accumulate wall-clock seconds for the previous top-1 label
+            if current_top1 and last_inference_time > 0:
+                time_accum[current_top1] += now - last_inference_time
+            last_inference_time = now
             action_labels = run_action_model(frame_buffer, args.top_k)
+            current_top1 = action_labels[0][0] if action_labels else ""
 
         # ── HUD ───────────────────────────────────────────────────────────────
         curr_time = time.time()
@@ -217,6 +250,7 @@ try:
         cv2.putText(frame, f"Device: {device.upper()}", (10, 65),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         draw_action_panel(frame, action_labels, len(frame_buffer))
+        draw_time_accumulator(frame, time_accum)
 
         if writer:
             writer.write(frame)
